@@ -3,6 +3,28 @@ import { validateDuration, createDemoBeats, findBeats } from "./audio-chart.js";
 const DESIGN_WIDTH = 1280;
 const DESIGN_HEIGHT = 720;
 const TRACKING_INTERVAL = 34;
+// Opt-in experiment: keep normal gameplay identical unless diagnostics are requested.
+const trackingExperiment = {
+  enabled: new URLSearchParams(location.search).get("trackingDebug") === "1",
+  smoothing: true,
+  sample: null,
+};
+let trackingDebugOutput = null;
+if (trackingExperiment.enabled) {
+  const panel = document.createElement("aside");
+  panel.style.cssText = "position:fixed;bottom:8px;left:8px;z-index:20;padding:10px;background:#101020ed;color:white;font:13px monospace;max-width:95vw;";
+  const label = document.createElement("label");
+  const toggle = document.createElement("input");
+  toggle.type = "checkbox";
+  toggle.checked = true;
+  toggle.addEventListener("change", () => { trackingExperiment.smoothing = toggle.checked; });
+  label.append(toggle, " Original smoothing (uncheck for direct movement)");
+  trackingDebugOutput = document.createElement("pre");
+  trackingDebugOutput.style.margin = "8px 0 0";
+  trackingDebugOutput.textContent = "Start a concert to collect tracking data.";
+  panel.append(label, trackingDebugOutput);
+  document.body.append(panel);
+}
 const FLIGHT_TIME = 2.35;
 const LEFT_RAIL = 438;
 const RIGHT_RAIL = 842;
@@ -466,8 +488,11 @@ function updateTracking(now) {
   game.lastVisionRun = now;
 
   try {
+    const inferenceStartedAt = performance.now();
     const hands = handLandmarker.detectForVideo(cameraVideo, now);
+    const handsFinishedAt = performance.now();
     const faces = faceLandmarker.detectForVideo(cameraVideo, now);
+    const facesFinishedAt = performance.now();
     const head = faces.faceLandmarks?.[0]?.[1];
     let leftHand = null;
     let rightHand = null;
@@ -483,9 +508,19 @@ function updateTracking(now) {
     game.trackingErrors = 0;
     game.cameraError = "";
     game.trackingValid = Boolean(head && leftHand && rightHand);
+    if (trackingExperiment.enabled) {
+      trackingExperiment.sample = {
+        head: Boolean(head), left: Boolean(leftHand), right: Boolean(rightHand),
+        handMs: handsFinishedAt - inferenceStartedAt,
+        faceMs: facesFinishedAt - handsFinishedAt,
+        leftRaw: head && leftHand ? cameraToLevel(leftHand.y, head.y) : null,
+        rightRaw: head && rightHand ? cameraToLevel(rightHand.y, head.y) : null,
+      };
+    }
     if (game.trackingValid) {
-      game.leftLevel = smooth(game.leftLevel, cameraToLevel(leftHand.y, head.y), 0.42);
-      game.rightLevel = smooth(game.rightLevel, cameraToLevel(rightHand.y, head.y), 0.42);
+      const smoothing = trackingExperiment.enabled && !trackingExperiment.smoothing ? 1 : 0.42;
+      game.leftLevel = smooth(game.leftLevel, cameraToLevel(leftHand.y, head.y), smoothing);
+      game.rightLevel = smooth(game.rightLevel, cameraToLevel(rightHand.y, head.y), smoothing);
       game.lastVisionAt = now;
     }
   } catch (error) {
@@ -562,6 +597,18 @@ function updateHud() {
   const isFresh = game.trackingValid && performance.now() - game.lastVisionAt < 240;
   trackingStatus.textContent = game.preview ? "AUTOMATIC HANDS · CAMERA OFF" : isFresh ? "HEAD + BOTH HANDS DETECTED" : game.cameraError || "SHOW YOUR HEAD + BOTH HANDS";
   trackingStatus.className = `tracking-status ${isFresh ? "ready" : "warning"}`;
+  if (trackingDebugOutput) {
+    const sample = trackingExperiment.sample;
+    const value = number => number === null ? "missing" : number.toFixed(3);
+    trackingDebugOutput.textContent = sample ? [
+      `CV detections: face=${sample.head} left=${sample.left} right=${sample.right}`,
+      `Inference: hands=${sample.handMs.toFixed(1)}ms face=${sample.faceMs.toFixed(1)}ms`,
+      `Game validity=${game.trackingValid} fresh=${isFresh} age=${Math.round(performance.now() - game.lastVisionAt)}ms (limit 240)`,
+      `Left: raw=${value(sample.leftRaw)} displayed=${value(game.leftLevel)}`,
+      `Right: raw=${value(sample.rightRaw)} displayed=${value(game.rightLevel)}`,
+      `Smoothing=${trackingExperiment.smoothing ? "original 0.42" : "OFF (direct)"}`,
+    ].join("\n") : "Start a concert to collect tracking data.";
+  }
 }
 
 function render(songTime) {
