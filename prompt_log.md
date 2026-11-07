@@ -62,3 +62,37 @@ could not spawn a child process in the sandbox (EPERM); running the same node:te
 suite directly succeeded, and npm test uses that command. An initial patch had
 out-of-order anchors and failed without changing files; the edit was reapplied.
 HANDOFF_REPORT.md remains untouched.
+
+## 2026-11-06 - Physical-hand mapping and threshold investigation
+
+User observations: physical left/right controls were reversed; visible confidence
+appeared to require 0.9; tracking false usually represented a genuinely missing
+hand. User requested correction and investigation of lower confidence settings.
+
+Evidence: installed MediaPipe 0.10.21 vision.d.ts documents defaults of 0.5 for
+minHandDetectionConfidence, minHandPresenceConfidence, and minTrackingConfidence.
+The game previously supplied none of them and never applied a 0.9 label cutoff.
+Official documentation corroborates the defaults and distinguishes handedness
+classification from palm/presence thresholds and tracking box overlap:
+https://developers.google.com/edge/mediapipe/solutions/vision/hand_landmarker?tab=Web
+
+Changes: removed the inherited label swap so Left maps to game left and Right
+to game right, matching the user's live observation. Made baseline 0.5 thresholds
+explicit and added an opt-in relaxed 0.35 detection/presence preset. Tracking
+threshold stays 0.5; smoothing and independent-hand rules stay unchanged.
+Diagnostic links reload between presets and the panel names all active thresholds.
+README explains the comparison, false-detection checks, acceptance status, and
+rollback to be3d673. Existing student implementation log remains untouched.
+
+Validation: eight synthetic regression checks and JavaScript syntax checks pass.
+Updated tests check anatomical mapping, duplicates, label scores below 0.9, and
+baseline/relaxed/fallback configuration. These tests do not measure model recall
+or false detections on real video. The 0.35 preset is experimental; no improvement
+or acceptable false-positive rate is claimed without live comparison.
+
+AI correction: preserving the inherited inverted mapping in the earlier change
+left the reported physical-hand reversal unresolved; corrected now using the
+user's live evidence. Missing CV outputs, rather than slow inference or smoothing,
+are the principal remaining hypothesis based on that evidence. Do not conflate
+high handedness classification confidence with a detection acceptance threshold.
+No HANDOFF_REPORT.md assistance was provided.

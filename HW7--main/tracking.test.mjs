@@ -17,6 +17,7 @@ function fixture() {
     cameraVideo: { readyState: 4, videoWidth: 640, currentTime: 0 },
     clock: 100,
     labels: ["Right", "Left"],
+    labelScore: 0.9,
     faceVisible: true,
     hits: [], misses: [],
     updateHud() {},
@@ -26,7 +27,7 @@ function fixture() {
   environment.performance = { now: () => environment.clock };
   environment.handLandmarker = { detectForVideo: () => ({
     landmarks: environment.labels.map(() => Array(10).fill({ y: 0.2 })),
-    handedness: environment.labels.map(categoryName => [{ categoryName, score: 0.9 }]),
+    handedness: environment.labels.map(categoryName => [{ categoryName, score: environment.labelScore }]),
   }) };
   environment.faceLandmarker = { detectForVideo: () => ({
     faceLandmarks: environment.faceVisible ? [[{}, { y: 0.4 }]] : [],
@@ -45,7 +46,7 @@ function fixture() {
 }
 
 test("one missing hand does not freeze or invalidate the other", () => {
-  for (const [label, active, missing] of [["Left", "right", "left"], ["Right", "left", "right"]]) {
+  for (const [label, active, missing] of [["Left", "left", "right"], ["Right", "right", "left"]]) {
     const e = fixture(); e.labels = [label]; e.frame();
     assert.notEqual(e.game[active + "Level"], 0.5);
     assert.equal(e.game[missing + "Level"], 0.5);
@@ -62,7 +63,7 @@ test("one missing hand does not freeze or invalidate the other", () => {
 test("loss immediately invalidates a hand; recovery updates it again", () => {
   const e = fixture(); e.frame();
   const lastLeft = e.game.handTracking.left.lastSeenAt;
-  e.labels = ["Left"]; e.frame();
+  e.labels = ["Right"]; e.frame();
   assert.equal(e.isHandTrackingFresh("left"), false);
   assert.equal(e.game.handTracking.left.lastSeenAt, lastLeft);
   assert.equal(e.isHandTrackingFresh("right"), true);
@@ -101,8 +102,28 @@ test("diagnostics expose duplicate labels and their classification scores", () =
   const e = fixture(); e.labels = ["Left", "Left"]; e.frame();
   assert.equal(e.trackingExperiment.sample.handCount, 2);
   assert.match(e.trackingExperiment.sample.labels, /0: Left \(0\.900\), 1: Left/);
-  assert.equal(e.game.handTracking.left.valid, false);
-  assert.equal(e.game.handTracking.right.valid, true);
+  assert.equal(e.game.handTracking.left.valid, true);
+  assert.equal(e.game.handTracking.right.valid, false);
+});
+
+test("returned detections with handedness scores below 0.9 are not discarded", () => {
+  const e = fixture(); e.labelScore = 0.65; e.frame();
+  assert.equal(e.isHandTrackingFresh("left"), true);
+  assert.equal(e.isHandTrackingFresh("right"), true);
+  assert.match(e.trackingExperiment.sample.labels, /0\.650/);
+});
+
+test("baseline and relaxed model threshold configuration are explicit and bounded", () => {
+  const configSource = source.slice(source.indexOf("const handThresholdPresets"), source.indexOf("// Opt-in experiment"));
+  for (const [query, expected] of [["", "baseline"], ["?handSensitivity=relaxed", "relaxed"], ["?handSensitivity=invalid", "baseline"]]) {
+    const e = { URLSearchParams, location: { search: query } };
+    vm.createContext(e);
+    vm.runInContext(configSource + ";globalThis.selected = handThresholdPreset; globalThis.options = handThresholds;", e);
+    assert.equal(e.selected, expected);
+    assert.equal(e.options.minHandDetectionConfidence, expected === "relaxed" ? 0.35 : 0.5);
+    assert.equal(e.options.minHandPresenceConfidence, expected === "relaxed" ? 0.35 : 0.5);
+    assert.equal(e.options.minTrackingConfidence, 0.5);
+  }
 });
 
 test("original smoothing and opt-in direct mode remain distinct; reset clears history", () => {

@@ -45,8 +45,9 @@ with the original smoothing enabled. Repeat quick up/down movements, then unchec
   detection for the sample. Raw hand count and returned labels distinguish a
   missing hand result from duplicate or unexpected labels. Scores shown alongside
   labels are handedness classification confidence, not positional accuracy.
-- The existing mapping remains model `Right` to game left and model `Left` to
-  game right; test each physical hand separately before changing this convention.
+- Mapping is now model `Left` to game left and model `Right` to game right,
+  correcting the reversal reported in live testing. The video sent to the model
+  is unmirrored; mirroring the drawn preview does not change model input.
 - Each hand now has its own freshness and age. Age means time since that hand
   was last detected with the face, not inference duration. A missing hand is
   invalid immediately; the other hand remains active if fresh. Age of 240 ms or
@@ -55,8 +56,9 @@ with the original smoothing enabled. Repeat quick up/down movements, then unchec
   Correct detections can still be slow. Smoothing does not control tracking validity.
 
 Opening the URL without `?trackingDebug=1` keeps original smoothing and hides
-diagnostics. Independent hand updates/scoring apply in both modes. CV settings,
-smoothing strength, and the 240 ms freshness threshold remain unchanged.
+diagnostics. Independent hand updates/scoring apply in both modes. Original
+smoothing strength and the 240 ms freshness threshold remain unchanged. Hand
+model settings use the baseline unless `handSensitivity=relaxed` is in the URL.
 Calibration still requires three continuous seconds with the face and both hands.
 Run `npm test` for isolated tracking/scoring regression checks. They do not verify
 real camera accuracy; the updated behavior still needs live player testing.
@@ -71,6 +73,50 @@ git restore --source=ea05764 -- HW7--main/game.js HW7--main/README.md HW7--main/
 This overwrites later edits to those files. The new test file may remain but
 targets the newer independent-hand behavior. Keep `prompt_log.md` as the history
 of the work performed.
+
+### Detection threshold comparison
+
+The previous code omitted confidence options, so the installed MediaPipe 0.10.21
+SDK used **0.5**, not 0.9, for detection, presence, and tracking. The confidence
+beside a returned Left/Right label is a separate handedness classification score;
+the game does not reject returned hands for having a label score below 0.9.
+See the [official Hand Landmarker configuration documentation](https://developers.google.com/edge/mediapipe/solutions/vision/hand_landmarker?tab=Web#configuration_options)
+and the comments in `node_modules/@mediapipe/tasks-vision/vision.d.ts`.
+
+| Preset | Detection | Presence | Tracking |
+| --- | --- | --- | --- |
+| Baseline (default) | 0.5 | 0.5 | 0.5 |
+| Relaxed (experimental) | 0.35 | 0.35 | 0.5 |
+
+Detection filters palm detections. Presence influences when the model repeats palm
+detection. Tracking uses overlap between consecutive hand boxes; it is held fixed
+to avoid also changing the geometric tracking/re-detection rule. The 0.35 values
+are trial settings, not validated optimal thresholds.
+
+Use the panel's Baseline/Relaxed links before starting a round; they reload the
+page and stop an active round. Or open these URLs directly:
+
+- Baseline: `http://localhost:4173/?trackingDebug=1`
+- Relaxed: `http://localhost:4173/?trackingDebug=1&handSensitivity=relaxed`
+
+Keep lighting, distance, smoothing, and movements the same for each comparison:
+show both hands for 15 seconds, repeat fast movements for 15 seconds, then hide
+each hand in turn for 10 seconds with your face and the other hand visible.
+Compare missing-hand frequency and return time. During the hidden-hand test,
+watch for a falsely active missing-hand indicator, wrong-side movement, or ghost
+hands. Reject the relaxed preset if those errors increase. A lower presence
+threshold can also retain a bad track longer; more returned frames alone do not
+prove better tracking. No recording or ground-truth labels are available here,
+so neither an improvement nor an acceptable false-detection rate is claimed yet.
+
+Commit `be3d673` preserves the independent-hand version before this mapping and
+threshold change. From the repository root, restore its relevant files with:
+
+```powershell
+git restore --source=be3d673 -- HW7--main/game.js HW7--main/tracking.test.mjs HW7--main/README.md
+```
+
+This replaces later edits to those files. Keep the prompt log as a historical record.
 
 The original game is preserved in Git commit `c260f9f`. To restore just the game
 script from the repository root (the parent of this folder):
@@ -92,7 +138,7 @@ live verification; they are not claimed as fully passed acceptance tests.
 | SPEC criterion | Implementation status |
 | --- | --- |
 | 1. Camera activation and clear errors | Implemented; errors still mention an unavailable Watch preview button. |
-| 2. Separate left/right indicators | Implemented; intermittent mapped-left detection reported in live testing. Raw labels are now visible in diagnostics. |
+| 2. Separate left/right indicators | Implemented; physical-hand mapping corrected after user reported reversal. Intermittent genuinely missing hands reported in live testing; threshold comparison added, outcome pending. |
 | 3. Independent head-relative movement | Implemented; loss of one hand now allows the other to continue updating. Original smoothing retained. |
 | 4. Local MP3 for a full-song round | Implemented for browser-decodable MP3/WAV; limited to 100 MB and 3 seconds to 20 minutes. |
 | 5. Falling targets, separate patterns, rhythm timing | Partial: variable-height patterns exist, but targets move horizontally. Energy-peak detection falls back to a fixed grid. |
@@ -116,14 +162,15 @@ judges the required hand once. `updateHud`, `drawControlRails`, and `drawConduct
 show which hand remains active. `resetGame` clears hand ages between rounds.
 `tracking.test.mjs` runs these actual functions against controlled model results.
 
-Next: (1) repeat the live one-hand-loss and quick-movement comparison;
-(2) examine raw counts/labels if mapped-left detections still disappear;
+Next: (1) verify corrected physical left/right controls;
+(2) compare baseline/relaxed presets for dropouts and false detections;
 (3) tune smoothing or timestamp handling only if that evidence supports it;
 (4) fix horizontal targets to meet the falling-target criterion.
 
-Known limitation: handedness mapping and duplicate-label handling are unchanged;
+Known limitation: duplicate-label handling is unchanged;
 two identical labels still leave one game hand missing. Lost hands retain their
 last displayed position but are dimmed and ineligible to score. Full recovery
-therefore may visibly catch up through smoothing. No prediction, confidence
-retuning, or replacement CV model was added, to keep this change focused on the
-confirmed all-or-nothing freeze and preserve the inherited work.
+therefore may visibly catch up through smoothing. The baseline retains original
+confidence thresholds; relaxed thresholds are opt-in for live comparison. No
+prediction or replacement CV model was added, to keep changes focused and preserve
+the inherited work.

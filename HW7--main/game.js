@@ -3,6 +3,13 @@ import { validateDuration, createDemoBeats, findBeats } from "./audio-chart.js";
 const DESIGN_WIDTH = 1280;
 const DESIGN_HEIGHT = 720;
 const TRACKING_INTERVAL = 34;
+// Compare model thresholds by URL; keep the installed SDK's 0.5 defaults normally.
+const handThresholdPresets = {
+  baseline: { minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5 },
+  relaxed: { minHandDetectionConfidence: 0.35, minHandPresenceConfidence: 0.35, minTrackingConfidence: 0.5 },
+};
+const handThresholdPreset = new URLSearchParams(location.search).get("handSensitivity") === "relaxed" ? "relaxed" : "baseline";
+const handThresholds = handThresholdPresets[handThresholdPreset];
 // Opt-in experiment: keep normal gameplay identical unless diagnostics are requested.
 const trackingExperiment = {
   enabled: new URLSearchParams(location.search).get("trackingDebug") === "1",
@@ -19,10 +26,22 @@ if (trackingExperiment.enabled) {
   toggle.checked = true;
   toggle.addEventListener("change", () => { trackingExperiment.smoothing = toggle.checked; });
   label.append(toggle, " Original smoothing (uncheck for direct movement)");
+  const thresholdLinks = document.createElement("div");
+  thresholdLinks.append("Threshold comparison (reloads game): ");
+  for (const preset of Object.keys(handThresholdPresets)) {
+    const link = document.createElement("a");
+    const url = new URL(location.href);
+    url.searchParams.set("trackingDebug", "1");
+    url.searchParams.set("handSensitivity", preset);
+    link.href = url.href;
+    link.textContent = preset === "baseline" ? "Baseline 0.5" : "Relaxed 0.35";
+    link.style.cssText = "color:#72d8ef;margin-right:12px;";
+    thresholdLinks.append(link);
+  }
   trackingDebugOutput = document.createElement("pre");
   trackingDebugOutput.style.margin = "8px 0 0";
   trackingDebugOutput.textContent = "Start a concert to collect tracking data.";
-  panel.append(label, trackingDebugOutput);
+  panel.append(label, thresholdLinks, trackingDebugOutput);
   document.body.append(panel);
 }
 const FLIGHT_TIME = 2.35;
@@ -337,6 +356,7 @@ async function loadVisionModels() {
       },
       runningMode: "VIDEO",
       numHands: 2,
+      ...handThresholds,
     });
     faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
       baseOptions: {
@@ -504,8 +524,10 @@ function updateTracking(now) {
     hands.landmarks?.forEach((landmarks, index) => {
       const label = hands.handedness?.[index]?.[0]?.categoryName;
       const palm = landmarks[9];
-      if (label === "Left") rightHand = palm;
-      if (label === "Right") leftHand = palm;
+      // The model receives unmirrored cameraVideo; only its drawn preview is mirrored.
+      // Its anatomical labels therefore map directly to the player's hands.
+      if (label === "Left") leftHand = palm;
+      if (label === "Right") rightHand = palm;
     });
 
     game.head = head;
@@ -632,7 +654,9 @@ function updateHud() {
     trackingDebugOutput.textContent = sample ? [
       `CV detections: face=${sample.head} left=${sample.left} right=${sample.right}`,
       `Raw hands=${sample.handCount}; labels/confidence: ${sample.labels}`,
-      "Mapping: model Right -> game left; model Left -> game right",
+      "Mapping: model Left -> game left; model Right -> game right",
+      `Thresholds (${handThresholdPreset}): detection=${handThresholds.minHandDetectionConfidence} presence=${handThresholds.minHandPresenceConfidence} tracking=${handThresholds.minTrackingConfidence}`,
+      "Label confidence above is NOT a detection threshold.",
       `Inference: hands=${sample.handMs.toFixed(1)}ms face=${sample.faceMs.toFixed(1)}ms`,
       `Both detected=${game.trackingValid}; freshness limit=240ms`,
       `Left fresh=${leftFresh} age=${age("left")}; right fresh=${rightFresh} age=${age("right")}`,
