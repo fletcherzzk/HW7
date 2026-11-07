@@ -132,3 +132,28 @@ validity are unchanged. Updated README and regression boundary cases; the test
 fixture now reads the actual configured grace duration from game.js. Previous
 150 ms version is preserved in commit a6c6d5e. All 13 regression tests and syntax
 checks passed. No live outcome is claimed. HANDOFF_REPORT.md remains untouched.
+
+## 2026-11-06 - Finalize accepted gameplay and remove runtime experiments
+
+User approved the 300 ms version and requested removal of all test features.
+Made selected relaxed detection/presence thresholds (0.35/0.35; tracking 0.5)
+the normal settings. Removed diagnostic overlays, label/timing instrumentation,
+URL presets, comparison links, smoothing toggle/direct mode, and inherited hidden
+camera-free autoplay/check-tracking hooks. Updated errors to stop recommending
+unavailable Watch preview. Kept normal smoothing, independent anatomical-hand
+controls, display grace, and strict missing/stale scoring protection.
+The included demo remains playable music, and the menu animation remains artwork.
+
+Developer regression tests remain separate from the game and were updated to
+check final settings instead of diagnostic modes. All 13 checks and syntax checks
+passed. README now describes final setup, controls, criterion status, code map,
+limitations, next work, and rollback to 7dc384a. No new live result is claimed.
+The user's positive live feedback applies to the earlier 300 ms build; removing
+experiment branches is verified automatically. Threshold selection follows the
+relaxed URL supplied for the user's live testing; baseline comparison is removed.
+An isolated startup smoke check also passed: normal startup always prepares the
+models/camera and waits for calibration, model failure returns to setup, and no
+runtime experiment hooks remain. Relative to original game.js, the final diff
+removes 62 original lines and adds 92, preserving well above 75% of that file;
+the original music, models, artwork code, HTML, and CSS remain preserved.
+HANDOFF_REPORT.md and the student's implementation log were not read or edited.

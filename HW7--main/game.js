@@ -5,47 +5,12 @@ const DESIGN_HEIGHT = 720;
 const TRACKING_INTERVAL = 34;
 const TRACKING_FRESH_MS = 240;
 const TRACKING_GRACE_MS = 300;
-// Compare model thresholds by URL; keep the installed SDK's 0.5 defaults normally.
-const handThresholdPresets = {
-  baseline: { minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5 },
-  relaxed: { minHandDetectionConfidence: 0.35, minHandPresenceConfidence: 0.35, minTrackingConfidence: 0.5 },
+// Final hand detection settings selected after the player's comparison.
+const handThresholds = {
+  minHandDetectionConfidence: 0.35,
+  minHandPresenceConfidence: 0.35,
+  minTrackingConfidence: 0.5,
 };
-const handThresholdPreset = new URLSearchParams(location.search).get("handSensitivity") === "relaxed" ? "relaxed" : "baseline";
-const handThresholds = handThresholdPresets[handThresholdPreset];
-// Opt-in experiment: keep normal gameplay identical unless diagnostics are requested.
-const trackingExperiment = {
-  enabled: new URLSearchParams(location.search).get("trackingDebug") === "1",
-  smoothing: true,
-  sample: null,
-};
-let trackingDebugOutput = null;
-if (trackingExperiment.enabled) {
-  const panel = document.createElement("aside");
-  panel.style.cssText = "position:fixed;bottom:8px;left:8px;z-index:20;padding:10px;background:#101020ed;color:white;font:13px monospace;max-width:95vw;";
-  const label = document.createElement("label");
-  const toggle = document.createElement("input");
-  toggle.type = "checkbox";
-  toggle.checked = true;
-  toggle.addEventListener("change", () => { trackingExperiment.smoothing = toggle.checked; });
-  label.append(toggle, " Original smoothing (uncheck for direct movement)");
-  const thresholdLinks = document.createElement("div");
-  thresholdLinks.append("Threshold comparison (reloads game): ");
-  for (const preset of Object.keys(handThresholdPresets)) {
-    const link = document.createElement("a");
-    const url = new URL(location.href);
-    url.searchParams.set("trackingDebug", "1");
-    url.searchParams.set("handSensitivity", preset);
-    link.href = url.href;
-    link.textContent = preset === "baseline" ? "Baseline 0.5" : "Relaxed 0.35";
-    link.style.cssText = "color:#72d8ef;margin-right:12px;";
-    thresholdLinks.append(link);
-  }
-  trackingDebugOutput = document.createElement("pre");
-  trackingDebugOutput.style.margin = "8px 0 0";
-  trackingDebugOutput.textContent = "Start a concert to collect tracking data.";
-  panel.append(label, thresholdLinks, trackingDebugOutput);
-  document.body.append(panel);
-}
 const FLIGHT_TIME = 2.35;
 const LEFT_RAIL = 438;
 const RIGHT_RAIL = 842;
@@ -72,7 +37,6 @@ const cameraVideo = document.querySelector("#camera-video");
 const canvas = document.querySelector("#game-canvas");
 let context = canvas.getContext("2d");
 const menuCanvas = document.querySelector("#stage-preview") || canvas;
-const previewButton = document.querySelector("#preview-button");
 const stageMessage = document.querySelector("#stage-message");
 let audioBuffer = null;
 let audioStartedAt = 0;
@@ -131,21 +95,12 @@ const game = {
 
 songInput.addEventListener("change", onSongSelected);
 demoButton.addEventListener("click", useIncludedDemo);
-startButton.addEventListener("click", () => startConcert(false));
+startButton.addEventListener("click", () => startConcert());
 playAgainButton.addEventListener("click", returnToSetup);
-previewButton?.addEventListener("click", () => startConcert(true));
 document.querySelector("#back-button")?.addEventListener("click", returnToSetup);
-document.querySelector("#check-tracking")?.addEventListener("click", async event => {
-  const button = event.currentTarget;
-  button.disabled = true;
-  setSetupStatus("Checking motion tracking...");
-  try { await ensureVisionModels(); setSetupStatus("Motion tracking is ready. You can start with your camera."); }
-  catch (error) { setSetupStatus(error.message, true); }
-  finally { button.disabled = false; }
-});
 window.addEventListener("pagehide", releaseCamera);
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && game.active && !game.preview) {
+  if (document.hidden && game.active) {
     returnToSetup();
     setSetupStatus("Concert stopped when you left the tab. Your camera is off; start again when ready.");
   }
@@ -209,7 +164,7 @@ function setBusy(value) {
   startButton.textContent = value ? "Preparing concert…" : "Start with camera";
 }
 
-async function startConcert(preview = false) {
+async function startConcert() {
   if (busy) return;
   const token = ++startupToken;
   setBusy(true);
@@ -226,19 +181,16 @@ async function startConcert(preview = false) {
     const beats = usingIncludedDemo ? createDemoBeats(audioBuffer.duration) : findBeats(audioBuffer, audioBuffer.duration);
     const chart = createNotes(beats, audioBuffer.duration, difficulty);
     if (!chart.length) throw new Error("This clip is too short for a concert. Try a longer song.");
-    if (!preview) {
-      loadingStage = "Preparing motion tracking";
-      setSetupStatus("Preparing motion tracking...");
-      await ensureVisionModels();
-      loadingStage = "Opening camera";
-      setSetupStatus("Allow camera access, then stand back with both hands visible.");
-      await ensureCamera(token);
-    }
+    loadingStage = "Preparing motion tracking";
+    setSetupStatus("Preparing motion tracking...");
+    await ensureVisionModels();
+    loadingStage = "Opening camera";
+    setSetupStatus("Allow camera access, then stand back with both hands visible.");
+    await ensureCamera(token);
     if (token !== startupToken) return;
     resetGame(chart);
     game.difficulty = difficulty;
-    game.preview = preview;
-    game.phase = preview ? "playing" : "calibrating";
+    game.phase = "calibrating";
     game.readySince = null;
     game.duration = audioBuffer.duration;
     game.head = null;
@@ -249,13 +201,12 @@ async function startConcert(preview = false) {
     resultsScreen.hidden = true;
     gameScreen.hidden = false;
     const modeBadge = document.querySelector("#mode-badge");
-    if (modeBadge) modeBadge.textContent = preview ? "AUTOPLAY PREVIEW · NOT YOUR SCORE" : "LIVE CONCERT";
-    cameraVideo.classList.toggle("visible", !preview);
+    if (modeBadge) modeBadge.textContent = "LIVE CONCERT";
+    cameraVideo.classList.add("visible");
     cancelAnimationFrame(menuFrame);
     context = canvas.getContext("2d");
     game.active = true;
     game.lastFrameAt = performance.now();
-    if (preview) beginAudio();
     animationFrame = requestAnimationFrame(gameLoop);
   } catch (error) {
     console.error(loadingStage, error);
@@ -285,11 +236,11 @@ async function ensureCamera(token) {
     stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } } });
   } catch (error) {
     const messages = {
-      NotAllowedError: "Camera access was not granted. Allow it in your browser, or use Watch preview.",
-      NotFoundError: "No camera found. Connect one, or use Watch preview.",
+      NotAllowedError: "Camera access was not granted. Allow it in your browser and try again.",
+      NotFoundError: "No camera found. Connect one and try again.",
       NotReadableError: "Your camera is busy. Close other camera apps and try again."
     };
-    throw new Error(messages[error.name] || "Camera could not start. Try Chrome or Edge, or Watch preview.");
+    throw new Error(messages[error.name] || "Camera could not start. Try Chrome or Edge.");
   }
   if (token !== startupToken) { stream.getTracks().forEach(track => track.stop()); throw new Error("Start cancelled."); }
   mediaStream = stream;
@@ -373,7 +324,7 @@ async function loadVisionModels() {
     handLandmarker = null; faceLandmarker = null;
     visionLoadPromise = null;
     console.error("Motion tracking initialization failed", error);
-    throw new Error("Motion tracking could not start. Try Chrome or Edge; Watch preview works without a camera.");
+    throw new Error("Motion tracking could not start. Try Chrome or Edge and restart the game.");
   }
 }
 
@@ -437,7 +388,6 @@ function nextLevel(hand, previous, difficulty, forceWideMove, random) {
 }
 
 function resetGame(chart) {
-  trackingExperiment.sample = null;
   Object.assign(game, {
     active: false,
     chart,
@@ -467,8 +417,7 @@ function gameLoop(now) {
   try {
     const elapsed = Math.min(0.08, (now - game.lastFrameAt) / 1000 || 0);
     game.lastFrameAt = now;
-    if (game.preview) updatePreviewHands(songTime(), now);
-    else updateTracking(now);
+    updateTracking(now);
     if (game.phase === "calibrating") {
       if (!game.trackingValid) game.readySince = null;
       else game.readySince ??= now;
@@ -496,16 +445,6 @@ function gameLoop(now) {
   }
 }
 
-function updatePreviewHands(time, now) {
-  for (const hand of ["left", "right"]) {
-    const next = game.chart.find(note => note.hand === hand && !note.judged);
-    if (next) game[hand + "Level"] = smooth(game[hand + "Level"], next.level, 0.22);
-    game.handTracking[hand] = { valid: true, lastSeenAt: now, lostSinceAt: null };
-  }
-  game.trackingValid = true;
-  game.lastVisionAt = now;
-}
-
 function updateTracking(now) {
   if (!handLandmarker || !faceLandmarker || cameraVideo.readyState < 2 || !cameraVideo.videoWidth) { invalidateTracking(); return; }
   if (cameraVideo.currentTime === game.lastVideoTime) return;
@@ -514,11 +453,8 @@ function updateTracking(now) {
   game.lastVisionRun = now;
 
   try {
-    const inferenceStartedAt = performance.now();
     const hands = handLandmarker.detectForVideo(cameraVideo, now);
-    const handsFinishedAt = performance.now();
     const faces = faceLandmarker.detectForVideo(cameraVideo, now);
-    const facesFinishedAt = performance.now();
     const head = faces.faceLandmarks?.[0]?.[1];
     let leftHand = null;
     let rightHand = null;
@@ -536,28 +472,13 @@ function updateTracking(now) {
     game.trackingErrors = 0;
     game.cameraError = "";
     game.trackingValid = Boolean(head && leftHand && rightHand);
-    if (trackingExperiment.enabled) {
-      trackingExperiment.sample = {
-        head: Boolean(head), left: Boolean(leftHand), right: Boolean(rightHand),
-        handCount: hands.landmarks?.length || 0,
-        labels: (hands.landmarks || []).map((_, index) => {
-          const category = hands.handedness?.[index]?.[0];
-          return index + ": " + (category?.categoryName || "unknown") + " (" + (Number.isFinite(category?.score) ? category.score.toFixed(3) : "no score") + ")";
-        }).join(", ") || "none",
-        handMs: handsFinishedAt - inferenceStartedAt,
-        faceMs: facesFinishedAt - handsFinishedAt,
-        leftRaw: head && leftHand ? cameraToLevel(leftHand.y, head.y) : null,
-        rightRaw: head && rightHand ? cameraToLevel(rightHand.y, head.y) : null,
-      };
-    }
-    const smoothing = trackingExperiment.enabled && !trackingExperiment.smoothing ? 1 : 0.42;
     for (const [hand, palm] of [["left", leftHand], ["right", rightHand]]) {
       const tracking = game.handTracking[hand];
       tracking.valid = Boolean(head && palm);
       if (tracking.valid) {
         tracking.lostSinceAt = null;
-        game[hand + "Level"] = smooth(game[hand + "Level"], cameraToLevel(palm.y, head.y), smoothing);
-        // Keep pre-inference timing unchanged to isolate independent-hand handling.
+        game[hand + "Level"] = smooth(game[hand + "Level"], cameraToLevel(palm.y, head.y), 0.42);
+        // Timestamp the camera sample; display grace never extends scoring freshness.
         tracking.lastSeenAt = now;
       } else {
         tracking.lostSinceAt ??= Math.min(performance.now(), (tracking.lastSeenAt ?? now) + TRACKING_FRESH_MS);
@@ -666,27 +587,9 @@ function updateHud() {
   const rightVisible = rightState !== "lost";
   const warning = leftVisible ? `RIGHT HAND NOT TRACKED / LEFT ${leftFresh ? "ACTIVE" : "HOLDING"}` : rightVisible ? `LEFT HAND NOT TRACKED / RIGHT ${rightFresh ? "ACTIVE" : "HOLDING"}` : "SHOW YOUR HEAD + BOTH HANDS";
   const holding = leftVisible && rightVisible;
-  trackingStatus.textContent = game.preview ? "AUTOMATIC HANDS · CAMERA OFF" : isFresh ? "HEAD + BOTH HANDS DETECTED" : holding ? "BRIEF TRACKING GAP / HOLDING POSITION" : game.cameraError || warning;
+  trackingStatus.textContent = isFresh ? "HEAD + BOTH HANDS DETECTED" : holding ? "BRIEF TRACKING GAP / HOLDING POSITION" : game.cameraError || warning;
   trackingStatus.className = `tracking-status ${isFresh ? "ready" : holding ? "" : "warning"}`;
-  if (trackingDebugOutput) {
-    const sample = trackingExperiment.sample;
-    const value = number => number === null ? "missing" : number.toFixed(3);
-    const age = hand => game.handTracking[hand].lastSeenAt === null ? "never" : Math.round(performance.now() - game.handTracking[hand].lastSeenAt) + "ms";
-    trackingDebugOutput.textContent = sample ? [
-      `CV detections: face=${sample.head} left=${sample.left} right=${sample.right}`,
-      `Raw hands=${sample.handCount}; labels/confidence: ${sample.labels}`,
-      "Mapping: model Left -> game left; model Right -> game right",
-      `Thresholds (${handThresholdPreset}): detection=${handThresholds.minHandDetectionConfidence} presence=${handThresholds.minHandPresenceConfidence} tracking=${handThresholds.minTrackingConfidence}`,
-      "Label confidence above is NOT a detection threshold.",
-      `Inference: hands=${sample.handMs.toFixed(1)}ms face=${sample.faceMs.toFixed(1)}ms`,
-      `Both detected=${game.trackingValid}; freshness limit=240ms`,
-      `Left fresh=${leftFresh} age=${age("left")}; right fresh=${rightFresh} age=${age("right")}`,
-      `Display: left=${leftState} right=${rightState}; grace=${TRACKING_GRACE_MS}ms (no scoring)`,
-      `Left: raw=${value(sample.leftRaw)} displayed=${value(game.leftLevel)}`,
-      `Right: raw=${value(sample.rightRaw)} displayed=${value(game.rightLevel)}`,
-      `Smoothing=${trackingExperiment.smoothing ? "original 0.42" : "OFF (direct)"}`,
-    ].join("\n") : "Start a concert to collect tracking data.";
-  }
+
 }
 
 function render(songTime) {
@@ -1107,8 +1010,8 @@ function finishConcert() {
   finalMisses.textContent = game.misses;
   finalAccuracy.textContent = `${accuracy}%`;
   finalCombo.textContent = game.bestCombo;
-  resultsPhrase.textContent = game.preview ? "Preview complete. Now it is your turn to take the podium." : resultLine(accuracy);
-  document.querySelector("#results-title").textContent = game.preview ? "Preview complete" : "Your curtain call";
+  resultsPhrase.textContent = resultLine(accuracy);
+  document.querySelector("#results-title").textContent = "Your curtain call";
   gameScreen.hidden = true;
   resultsScreen.hidden = false;
 }
@@ -1126,7 +1029,6 @@ function returnToSetup() {
   stopAudio();
   releaseCamera();
   game.active = false;
-  game.preview = false;
   game.phase = "setup";
   cancelAnimationFrame(animationFrame);
   resultsScreen.hidden = true;

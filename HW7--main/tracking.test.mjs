@@ -12,7 +12,6 @@ const resetSource = source.slice(source.indexOf("function resetGame(chart)"), so
 function fixture() {
   const environment = {
     game: {},
-    trackingExperiment: { enabled: true, smoothing: true, sample: null },
     TRACKING_INTERVAL: 34,
     TRACKING_FRESH_MS: 240,
     TRACKING_GRACE_MS: Number(source.match(/const TRACKING_GRACE_MS = (\d+);/)[1]),
@@ -100,10 +99,8 @@ test("stale camera frames cannot score and unavailable video invalidates trackin
   assert.equal(e.game.handTracking.left.valid, false);
 });
 
-test("diagnostics expose duplicate labels and their classification scores", () => {
+test("duplicate labels leave the other hand invalid", () => {
   const e = fixture(); e.labels = ["Left", "Left"]; e.frame();
-  assert.equal(e.trackingExperiment.sample.handCount, 2);
-  assert.match(e.trackingExperiment.sample.labels, /0: Left \(0\.900\), 1: Left/);
   assert.equal(e.game.handTracking.left.valid, true);
   assert.equal(e.game.handTracking.right.valid, false);
 });
@@ -112,32 +109,37 @@ test("returned detections with handedness scores below 0.9 are not discarded", (
   const e = fixture(); e.labelScore = 0.65; e.frame();
   assert.equal(e.isHandTrackingFresh("left"), true);
   assert.equal(e.isHandTrackingFresh("right"), true);
-  assert.match(e.trackingExperiment.sample.labels, /0\.650/);
 });
 
-test("baseline and relaxed model threshold configuration are explicit and bounded", () => {
-  const configSource = source.slice(source.indexOf("const handThresholdPresets"), source.indexOf("// Opt-in experiment"));
-  for (const [query, expected] of [["", "baseline"], ["?handSensitivity=relaxed", "relaxed"], ["?handSensitivity=invalid", "baseline"]]) {
-    const e = { URLSearchParams, location: { search: query } };
-    vm.createContext(e);
-    vm.runInContext(configSource + ";globalThis.selected = handThresholdPreset; globalThis.options = handThresholds;", e);
-    assert.equal(e.selected, expected);
-    assert.equal(e.options.minHandDetectionConfidence, expected === "relaxed" ? 0.35 : 0.5);
-    assert.equal(e.options.minHandPresenceConfidence, expected === "relaxed" ? 0.35 : 0.5);
-    assert.equal(e.options.minTrackingConfidence, 0.5);
-  }
+test("final model options use the selected detection thresholds", async () => {
+  const configSource = source.slice(source.indexOf("const handThresholds"), source.indexOf("const FLIGHT_TIME"));
+  let loader = source.slice(source.indexOf("async function loadVisionModels()"), source.indexOf("async function ensureAudioGraph()"));
+  const importStart = loader.indexOf("    const { FilesetResolver");
+  const importEnd = loader.indexOf("    const vision =", importStart);
+  loader = loader.slice(0, importStart) + "    const { FilesetResolver, HandLandmarker, FaceLandmarker } = mockVision;\n" + loader.slice(importEnd);
+  loader = loader.replaceAll("import.meta.url", JSON.stringify(new URL("./game.js", import.meta.url).href));
+  const e = { URL, console, handLandmarker: null, faceLandmarker: null, visionLoadPromise: null };
+  e.mockVision = {
+    FilesetResolver: { forVisionTasks: async () => ({}) },
+    HandLandmarker: { createFromOptions: async (_, options) => { e.handOptions = options; return {}; } },
+    FaceLandmarker: { createFromOptions: async () => ({}) },
+  };
+  vm.createContext(e); vm.runInContext(configSource + loader, e);
+  await e.loadVisionModels();
+  assert.equal(e.handOptions.minHandDetectionConfidence, 0.35);
+  assert.equal(e.handOptions.minHandPresenceConfidence, 0.35);
+  assert.equal(e.handOptions.minTrackingConfidence, 0.5);
+  assert.equal(e.handOptions.numHands, 2);
+  assert.equal(e.handOptions.runningMode, "VIDEO");
 });
 
-test("original smoothing and opt-in direct mode remain distinct; reset clears history", () => {
+test("normal smoothing is fixed and round reset clears tracking history", () => {
   const e = fixture(); e.frame();
-  const raw = e.trackingExperiment.sample.leftRaw;
+  const raw = e.cameraToLevel(0.2, 0.4);
   assert.equal(e.game.leftLevel, 0.5 + (raw - 0.5) * 0.42);
-  e.trackingExperiment.smoothing = false; e.frame();
-  assert.equal(e.game.leftLevel, raw);
   e.resetGame([]);
   assert.equal(e.game.handTracking.left.lastSeenAt, null);
   assert.equal(e.isHandTrackingFresh("right"), false);
-  assert.equal(e.trackingExperiment.sample, null);
 });
 
 test("grace holds a lost hand, rejects its score, and expires without being extended", () => {
@@ -199,7 +201,6 @@ test("HUD holds the warning during grace and names the missing hand after expiry
   const e = fixture(); e.frame(); e.labels = ["Right"]; e.frame();
   for (const name of ["scoreValue", "comboValue", "multiplierValue", "judgementValue", "trackingStatus"]) e[name] = {};
   e.scoreMultiplier = () => 1;
-  e.trackingDebugOutput = null;
   vm.runInContext(source.slice(source.indexOf("function updateHud()"), source.indexOf("function render(")), e);
   e.updateHud();
   assert.equal(e.trackingStatus.textContent, "BRIEF TRACKING GAP / HOLDING POSITION");

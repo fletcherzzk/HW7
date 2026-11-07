@@ -1,197 +1,158 @@
 # Orchestra Panic
 
-`Orchestra Panic` is a local browser rhythm game. Pick an MP3 or WAV and a difficulty with the mouse, then conduct with both hands in front of your camera.
+Orchestra Panic is a local browser rhythm game. Choose music and difficulty,
+then move your physical left and right hands to control the matching game hands.
 
-## Run locally
+## Install and run
 
-Serve this folder from `localhost` rather than opening `index.html` directly. Camera access requires a secure context or localhost.
-
-```powershell
-node start-server.mjs
-```
-
-Open `http://localhost:4173` in a modern Chromium browser and allow camera access. The tracking models are included locally, so the game does not need to download them in the browser.
-
-## How to play
-
-1. Choose an MP3 or WAV, or select **Use Included Demo**, then pick a difficulty and select **START THE CONCERT**.
-2. Keep your head and both hands visible. The camera image is mirrored just like a selfie camera.
-3. Move the blue left-hand indicator and coral right-hand indicator to their matching notes as they arrive at the center rails.
-4. A green tracking indicator means the game has found your head and both hands.
-   If one hand disappears during play, the other can still move and score. The
-   missing hand stays at its last position, dims after a 300 ms grace period,
-   and cannot earn points at any time while missing. Your
-   face is required for either hand because controls use head-relative heights.
-
-The note chart is generated from the uploaded MP3's audio energy. Easy leaves generous height tolerance, Normal uses both hands more often, and Hard creates dense, high-motion patterns.
-
-## Notes
-
-- `demo-track.wav` is a short original instrumental included for testing. It was created specifically for this project and is free to use with the game.
-- No song files are stored or uploaded; the selected audio stays in your browser session.
-- The camera video stays on your device and is only used to drive the on-screen silhouette.
-- Hand and face tracking models are stored in `assets/models/`. After the project dependencies have been installed, gameplay does not need the browser to download tracking resources.
-- The final-applause and failure sounds are synthesized in the browser, so the project contains no copied audio assets.
-
-## Tracking experiment (Phase 2)
-
-Install Node.js, open a terminal in this folder, run `npm.cmd ci`, then
-`npm.cmd start`. Open `http://localhost:4173/?trackingDebug=1` in Chrome or Edge.
-Start the demo with your face and both hands visible. The diagnostic panel starts
-with the original smoothing enabled. Repeat quick up/down movements, then uncheck
-**Original smoothing** and repeat. Scores in this diagnostic session are experimental.
-
-- Raw positions moving promptly while displayed positions trail indicates smoothing lag.
-- A false face/left/right detection means the script did not obtain that mapped
-  detection for the sample. Raw hand count and returned labels distinguish a
-  missing hand result from duplicate or unexpected labels. Scores shown alongside
-  labels are handedness classification confidence, not positional accuracy.
-- Mapping is now model `Left` to game left and model `Right` to game right,
-  correcting the reversal reported in live testing. The video sent to the model
-  is unmirrored; mirroring the drawn preview does not change model input.
-- Each hand now has its own freshness and age. Age means time since that hand
-  was last detected with the face, not inference duration. A missing hand is
-  invalid immediately; the other hand remains active if fresh. Age of 240 ms or
-  more also prevents scoring. Pre-inference timestamps remain unchanged.
-- Hand/face inference times show how long model execution blocks the game loop.
-  Correct detections can still be slow. Smoothing does not control tracking validity.
-- Display states are `tracked`, `grace`, and `lost`. During grace the last position
-  and normal brightness are retained, with a brief holding message instead of a
-  Not Tracked warning. The separate `fresh` value remains false for missing or
-  stale data; a visible hand in grace cannot earn points.
-
-Opening the URL without `?trackingDebug=1` keeps original smoothing and hides
-diagnostics. Independent hand updates/scoring apply in both modes. Original
-smoothing strength and the 240 ms freshness threshold remain unchanged. Hand
-model settings use the baseline unless `handSensitivity=relaxed` is in the URL.
-Calibration still requires three continuous seconds with the face and both hands.
-Run `npm test` for isolated tracking/scoring regression checks. They do not verify
-real camera accuracy; the updated behavior still needs live player testing.
-
-The first diagnostic experiment is preserved in commit `ea05764`. From the
-repository root, restore its gameplay, README, and package scripts with:
+Install Node.js (the project was checked with Node.js 22). Download or clone the
+repository and open PowerShell in the inner HW7--main folder containing package.json:
 
 ```powershell
-git restore --source=ea05764 -- HW7--main/game.js HW7--main/README.md HW7--main/package.json
+npm.cmd ci
+npm.cmd start
 ```
 
-This overwrites later edits to those files. The new test file may remain but
-targets the newer independent-hand behavior. Keep `prompt_log.md` as the history
-of the work performed.
+Keep that terminal open. Visit **http://localhost:4173/** in Chrome or Edge and
+allow camera access. Use localhost rather than opening index.html directly.
+The initial npm install needs internet access; models are included locally.
+If port 4173 is already occupied, check whether another game server is running.
+Use Ctrl+C in its terminal to stop it. The server binds to this machine only.
 
-### Detection threshold comparison
+## Controls and playing a round
 
-The previous code omitted confidence options, so the installed MediaPipe 0.10.21
-SDK used **0.5**, not 0.9, for detection, presence, and tracking. The confidence
-beside a returned Left/Right label is a separate handedness classification score;
-the game does not reject returned hands for having a label score below 0.9.
-See the [official Hand Landmarker configuration documentation](https://developers.google.com/edge/mediapipe/solutions/vision/hand_landmarker?tab=Web#configuration_options)
-and the comments in `node_modules/@mediapipe/tasks-vision/vision.d.ts`.
+1. Select a local MP3/WAV or **Use Included Demo**, then choose Easy, Normal, or Hard.
+2. Click **Start with camera** and allow camera access.
+3. Keep your face and both hands visible for three seconds to start the music.
+4. Raise/lower each hand relative to your head to match the corresponding blue
+   left-hand or coral right-hand targets at their arrival time.
+5. At the end, view score, hits, misses, accuracy, and best combo. **Play Again**
+   returns to setup, where you can keep the song or select another.
 
-| Preset | Detection | Presence | Tracking |
-| --- | --- | --- | --- |
-| Baseline (default) | 0.5 | 0.5 | 0.5 |
-| Relaxed (experimental) | 0.35 | 0.35 | 0.5 |
+The physical left hand controls game left; physical right controls game right.
+The camera image is mirrored for display. Difficulty narrows the acceptable
+height zone and changes note density/movement. Leaving the tab stops the round
+and releases the camera; return and start again to play.
 
-Detection filters palm detections. Presence influences when the model repeats palm
-detection. Tracking uses overlap between consecutive hand boxes; it is held fixed
-to avoid also changing the geometric tracking/re-detection rule. The 0.35 values
-are trial settings, not validated optimal thresholds.
+Uploaded files must be browser-decodable, at most 100 MB, and 3 seconds to 20
+minutes long. Some very short clips produce no playable targets. Selected music
+and video stay on your device; they are not uploaded. The included demo is an
+original instrumental. Audience/failure sounds are synthesized in the browser.
 
-Use the panel's Baseline/Relaxed links before starting a round; they reload the
-page and stop an active round. Or open these URLs directly:
+## Final tracking behavior
 
-- Baseline: `http://localhost:4173/?trackingDebug=1`
-- Relaxed: `http://localhost:4173/?trackingDebug=1&handSensitivity=relaxed`
+Each hand updates independently when the face and that hand are detected. If a
+hand disappears, its position holds. A **300 ms display grace** delays dimming and
+Not Tracked warnings for that hand. A short holding message distinguishes this
+from a confirmed long loss. The other hand continues responding independently.
 
-Keep lighting, distance, smoothing, and movements the same for each comparison:
-show both hands for 15 seconds, repeat fast movements for 15 seconds, then hide
-each hand in turn for 10 seconds with your face and the other hand visible.
-Compare missing-hand frequency and return time. During the hidden-hand test,
-watch for a falsely active missing-hand indicator, wrong-side movement, or ghost
-hands. Reject the relaxed preset if those errors increase. A lower presence
-threshold can also retain a bad track longer; more returned frames alone do not
-prove better tracking. No recording or ground-truth labels are available here,
-so neither an improvement nor an acceptable false-detection rate is claimed yet.
+Missing data is ineligible to score immediately. Data 240 ms old or older is also
+ineligible, including during display grace. If camera frames stop arriving, the
+300 ms display grace begins when the 240 ms freshness window expires. Repeated
+missing results cannot restart grace. Never-detected hands have no grace. Face
+loss prevents both hands from scoring. Calibration still requires actual face
+and both-hand detection; display grace cannot bypass it.
 
-Commit `be3d673` preserves the independent-hand version before this mapping and
-threshold change. From the repository root, restore its relevant files with:
-
-```powershell
-git restore --source=be3d673 -- HW7--main/game.js HW7--main/tracking.test.mjs HW7--main/README.md
-```
-
-This replaces later edits to those files. Keep the prompt log as a historical record.
-
-The original game is preserved in Git commit `c260f9f`. To restore just the game
-script from the repository root (the parent of this folder):
-
-```powershell
-git restore --source=c260f9f -- HW7--main/game.js
-```
-
-This replaces any subsequent edits to that file. Exact pre-experiment copies of
-`game.js` and this README are also in
-`../implementation/before-tracking-experiment-2026-11-06/`, with SHA-256 hashes.
+Hand detection/presence thresholds are **0.35**; the tracking threshold stays
+**0.5**. These are the selected relaxed settings, now used without URL options.
+Smoothing remains 0.42. No diagnostic panel, smoothing toggle, threshold selector,
+or autoplay test mode is available. Old experimental URL parameters are ignored.
+A returned Left/Right classification score is separate from detection thresholds;
+the game has no 0.9 classification cutoff. Lower thresholds can admit false
+results; the user's live comparison is practical feedback, not a quantified
+accuracy benchmark.
 
 ## Acceptance criteria status
 
-The version immediately before display grace is preserved in commit `96e25b3`.
-To restore its gameplay, tests, and README from the repository root:
-
-```powershell
-git restore --source=96e25b3 -- HW7--main/game.js HW7--main/tracking.test.mjs HW7--main/README.md
-```
-
-This overwrites later edits to those files. Threshold presets remain unchanged
-in the grace version: default 0.5, opt-in relaxed detection/presence 0.35.
-
-Statuses below describe implementation evidence. Camera reliability, visual
-readability, uploaded-song synchronization, and audible feedback still require
-live verification; they are not claimed as fully passed acceptance tests.
+These statuses describe implementation evidence and the user's tracking feedback.
+Full end-to-end acceptance testing of every feature has not been performed.
 
 | SPEC criterion | Implementation status |
 | --- | --- |
-| 1. Camera activation and clear errors | Implemented; errors still mention an unavailable Watch preview button. |
-| 2. Separate left/right indicators | Implemented; physical-hand mapping corrected after user reported reversal. Intermittent genuinely missing hands reported in live testing; threshold comparison added, outcome pending. |
+| 1. Camera activation and clear errors | Implemented; camera errors are reported without suggesting unavailable preview controls. |
+| 2. Separate left/right indicators | Implemented; physical-hand mapping corrected and lower detection/presence thresholds selected. Intermittent genuine detection loss remains possible. |
 | 3. Independent head-relative movement | Implemented; loss of one hand now allows the other to continue updating. Original smoothing retained. |
 | 4. Local MP3 for a full-song round | Implemented for browser-decodable MP3/WAV; limited to 100 MB and 3 seconds to 20 minutes. |
 | 5. Falling targets, separate patterns, rhythm timing | Partial: variable-height patterns exist, but targets move horizontally. Energy-peak detection falls back to a fixed grid. |
 | 6. Height-based scoring once per target | Implemented; now validates the required hand independently. Synthetic regression checks cover missing/stale hands and duplicate judging. |
 | 7. Results, replay, and song selection | Implemented; requires live round-end verification. |
-| 8. Tracking-loss warning and scoring protection | Implemented per hand; warnings/dimming have a 300 ms display grace. Missing/stale data cannot score, including during grace. Missing face invalidates both for scoring. Synthetic checks passed; live comparison pending. |
+| 8. Tracking-loss warning and scoring protection | Implemented per hand; warnings/dimming have a 300 ms display grace. Missing/stale data cannot score, including during grace. Missing face invalidates both for scoring. Synthetic checks passed; the user approved the 300 ms version in live testing. |
 | 9. Difficulty narrows visible height tolerance | Implemented with Easy/Normal/Hard tolerances; visual verification pending. |
 | 10. Auditorium/orchestra with readable gameplay | Canvas scene implemented; visual verification pending. |
 | 11. One boo per five-miss streak, reset on hit | Logic implemented; synthesized descending sound needs listening to assess whether it resembles audience booing. |
 
-The optional proposed 0.3-second mute is not implemented; individual misses use
-a gain/filter effect instead. Instrument separation is an optional unimplemented
-extension. This change does not address those separate features.
+The optional proposed 0.3-second mute is not implemented; misses use a gain/filter
+effect instead. Optional musical-part/instrument separation is not implemented.
 
-### Tracking code map and next steps
+## Code map
 
-In `game.js`, `updateTracking` maps CV results and updates each hand independently;
-`isHandTrackingFresh` centralizes the strict per-hand scoring freshness rule;
-`handTrackingDisplayState` adds display-only grace using `TRACKING_GRACE_MS` (300).
-`invalidateTracking` rejects both hands on camera/model failure. `evaluateNotes`
-judges the required hand once. `updateHud`, `drawControlRails`, and `drawConductor`
-show which hand remains active. `resetGame` clears hand ages between rounds.
-`tracking.test.mjs` runs these actual functions against controlled model results.
+There are no custom classes. Most behavior is in functions in game.js.
 
-Next: (1) verify corrected physical left/right controls;
-(2) compare baseline/relaxed presets for dropouts and false detections;
-(3) tune smoothing or timestamp handling only if that evidence supports it;
-(4) fix horizontal targets to meet the falling-target criterion.
+| File or function | Responsibility / where to change behavior |
+| --- | --- |
+| index.html | Setup, file selection, difficulty controls, gameplay HUD, results. |
+| styles.css | Page layout, colors, text, responsive rules. |
+| game.js: loadVisionModels / ensureCamera | Model settings/assets and camera permission/startup. |
+| game.js: updateTracking / cameraToLevel | Anatomical label mapping, head-relative heights, smoothing, per-hand state. |
+| game.js: isHandTrackingFresh / handTrackingDisplayState | Strict scoring freshness versus display-only grace; constants near the file top set timing. |
+| game.js: invalidateTracking / resetGame | Reject tracking on camera/model failure; clear round state. |
+| game.js: startConcert / gameLoop | Audio preparation, camera calibration, round lifecycle and frame updates. |
+| game.js: createNotes / nextLevel | Difficulty-dependent two-hand patterns and target heights. |
+| game.js: evaluateNotes / recordHit / recordMiss | One-time arrival judgement, score/combo, streak feedback. |
+| game.js: drawNotes / drawControlRails / drawConductor / drawTheatre | Target motion, acceptable zones, hand indicators, auditorium/orchestra. |
+| game.js: updateHud / finishConcert / returnToSetup | Live status and score, final results, replay. |
+| game.js: triggerDissonance / playBoo / playApplause | Miss effects and synthesized audience feedback. |
+| audio-chart.js | Duration validation, included-demo beat grid, uploaded-audio energy-peak detection. |
+| start-server.mjs | Local HTTP server, MIME types, byte-range audio delivery. |
+| generate-demo-track.mjs / demo-track.wav | Original demo generator and playable demo music. |
+| assets/models/ | Included hand/face model files; MediaPipe runtime is installed in node_modules. |
+| tracking.test.mjs | Developer-only automated tracking/scoring regression checks; not loaded by the game. |
+| package.json / package-lock.json | Commands and pinned dependency installation. |
+| SPEC.md / ../prompt_log.md | Original requirements and AI-assisted work history. |
 
-Known limitation: duplicate-label handling is unchanged;
-two identical labels still leave one game hand missing. Lost hands retain their
-last displayed position and are ineligible to score immediately; dimming and
-Not Tracked warnings wait up to 300 ms after loss is observed. If video stalls,
-grace begins when the existing 240 ms freshness window expires; scoring stops
-at that expiry, without waiting for display grace. Repeated missing results do
-not restart grace. Hands never detected get no grace. Calibration still resets
-on actual detection loss; grace cannot bypass its both-hands requirement. Full recovery
-therefore may visibly catch up through smoothing. The baseline retains original
-confidence thresholds; relaxed thresholds are opt-in for live comparison. No
-prediction or replacement CV model was added, to keep changes focused and preserve
-the inherited work.
+Run `npm.cmd test` for regression checks and `npm.cmd run check` for syntax checks.
+The automated checks simulate CV results; they do not establish real camera accuracy.
+
+## Known limitations and shortcuts
+
+- Targets move horizontally instead of falling from above. This remains the main
+  acceptance-criterion gap; this handoff preserved the inherited presentation.
+- Audio timing uses energy peaks with a fixed-grid fallback, rather than full
+  musical beat/instrument analysis. This keeps the inherited approach simple,
+  but synchronization varies with music.
+- Duplicate handedness labels can leave one game hand missing. Missing positions
+  are held, never predicted; recovery can visibly catch up through smoothing.
+- Both CV models execute synchronously on CPU in the drawing loop. Slow machines
+  can still stutter. Grace smooths warnings, not model execution or detection.
+- The three-second calibration can restart on brief losses. Its countdown HTML
+  element is absent, so the HUD may say hands are detected before music starts.
+- Canvas drawing stretches with the viewport and may distort at unusual aspect
+  ratios. No specific resize failure has been confirmed.
+- The simple orchestra illustration, synthesized audience tone, and energy-based
+  chart are retained shortcuts. The original author's rationale is undocumented;
+  the handoff focused changes on controls/reliability rather than replacing them.
+
+## Next priorities
+
+1. Change target motion to fall from above while preserving variable landing heights.
+2. Verify MP3 synchronization, difficulty zones, full-song results, and boo behavior
+   across songs and machines; document acceptance results accurately.
+3. Add a visible calibration countdown and improve handling of repeated CV losses
+   if further player testing shows they prevent starting.
+4. Improve beat analysis or CV scheduling only after measuring the remaining issues.
+
+## Retrieving earlier versions
+
+Git commit **7dc384a** preserves the last diagnostic build with 300 ms grace.
+From the repository root, restore its game, tests, and README with:
+
+```powershell
+git restore --source=7dc384a -- HW7--main/game.js HW7--main/tracking.test.mjs HW7--main/README.md
+```
+
+This overwrites later edits to those files. Original inherited project files are
+in commit **c260f9f**. That was the second repository commit; the first contains
+only .gitattributes, so the literal first-commit assignment rule remains a history
+concern. Exact pre-experiment game/README backups are also under
+../implementation/before-tracking-experiment-2026-11-06/. Keep prompt_log.md as
+history. HANDOFF_REPORT.md is written solely by the student.
