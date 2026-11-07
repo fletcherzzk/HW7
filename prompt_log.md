@@ -96,3 +96,30 @@ user's live evidence. Missing CV outputs, rather than slow inference or smoothin
 are the principal remaining hypothesis based on that evidence. Do not conflate
 high handedness classification confidence with a detection acceptance threshold.
 No HANDOFF_REPORT.md assistance was provided.
+
+## 2026-11-06 - Display grace for temporary tracking loss
+
+User requested two final priorities near the one-hour mark: retain threshold
+changes and add a grace period that holds the last displayed position while
+never permitting missing or stale data to score. The earlier discussion proposed
+150 ms per hand; the user authorized implementation.
+
+Changes: retained baseline/relaxed threshold presets exactly. Added independent
+150 ms display grace, a holding message, and delayed warning/dimming. Each hand
+stores the start of a loss; repeated missing results cannot extend grace. Hand
+positions already stop updating when missing and continue to hold through grace.
+The strict scoring helper remains separate: missing data is rejected immediately,
+and stale data is rejected at the existing 240 ms expiry. If camera frames stall,
+display grace starts at freshness expiry. No grace is given to never-seen hands.
+Recovery clears loss history. Face loss and model/video failure also preserve
+scoring protection. Calibration still requires actual detection of both hands.
+README records behavior, acceptance status, code map, and rollback to 96e25b3.
+
+Validation: all 13 regression checks and npm run check passed. New cases cover
+held positions/no points during grace, expiration at 150 ms, repeated missing
+results, recovery/new loss, stale frames/no points during grace, never-seen/reset
+hands, and HUD warning suppression/expiry. Existing threshold and mapping tests
+also passed. Live camera confirmation remains for the player; no live improvement
+is claimed. One README patch had an invalid extra anchor and failed without edits;
+it was reapplied correctly. HANDOFF_REPORT.md and the student's implementation log
+remain untouched.

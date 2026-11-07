@@ -14,6 +14,8 @@ function fixture() {
     game: {},
     trackingExperiment: { enabled: true, smoothing: true, sample: null },
     TRACKING_INTERVAL: 34,
+    TRACKING_FRESH_MS: 240,
+    TRACKING_GRACE_MS: 150,
     cameraVideo: { readyState: 4, videoWidth: 640, currentTime: 0 },
     clock: 100,
     labels: ["Right", "Left"],
@@ -136,4 +138,73 @@ test("original smoothing and opt-in direct mode remain distinct; reset clears hi
   assert.equal(e.game.handTracking.left.lastSeenAt, null);
   assert.equal(e.isHandTrackingFresh("right"), false);
   assert.equal(e.trackingExperiment.sample, null);
+});
+
+test("grace holds a lost hand, rejects its score, and expires without being extended", () => {
+  const e = fixture(); e.frame();
+  const held = e.game.leftLevel;
+  e.labels = ["Right"]; e.frame(); // Loss starts at 150 ms.
+  assert.equal(e.handTrackingDisplayState("left"), "grace");
+  assert.equal(e.isHandTrackingFresh("left"), false);
+  e.game.chart = ["left", "right"].map(hand => ({ hand, time: 0, level: e.game[hand + "Level"], tolerance: 1 }));
+  e.evaluateNotes(1);
+  assert.deepEqual(e.hits, ["right"]);
+  assert.deepEqual(e.misses, [["left", "NO TRACK!"]]);
+  e.frame(); e.frame(); // Repeated missing results must not restart grace.
+  assert.equal(e.game.leftLevel, held);
+  assert.equal(e.handTrackingDisplayState("left", 299), "grace");
+  assert.equal(e.handTrackingDisplayState("left", 300), "lost");
+  assert.equal(e.handTrackingDisplayState("right", 300), "tracked");
+});
+
+test("short-gap recovery clears grace and a later loss gets its own interval", () => {
+  const e = fixture(); e.frame();
+  e.labels = ["Right"]; e.frame();
+  e.labels = ["Right", "Left"]; e.frame();
+  assert.equal(e.handTrackingDisplayState("left"), "tracked");
+  assert.equal(e.game.handTracking.left.lostSinceAt, null);
+  e.labels = ["Right"]; e.frame();
+  assert.equal(e.game.handTracking.left.lostSinceAt, 250);
+  assert.equal(e.handTrackingDisplayState("left", 399), "grace");
+  assert.equal(e.handTrackingDisplayState("left", 400), "lost");
+});
+
+test("stalled frames get display grace after freshness expires but cannot score", () => {
+  const e = fixture(); e.frame();
+  e.clock = 340; // Last good data at 100 ms; freshness expires now.
+  e.updateTracking(e.clock); // No new camera frame.
+  assert.equal(e.handTrackingDisplayState("left"), "grace");
+  assert.equal(e.isHandTrackingFresh("left"), false);
+  e.game.chart = [{ hand: "left", time: 0, level: e.game.leftLevel, tolerance: 1 }];
+  e.evaluateNotes(1);
+  assert.deepEqual(e.hits, []);
+  assert.equal(e.handTrackingDisplayState("left", 490), "lost");
+  e.clock = 600; e.labels = []; e.frame(); // A late missing result cannot restart grace.
+  assert.equal(e.handTrackingDisplayState("left"), "lost");
+});
+
+test("unseen/reset hands never get grace and face loss cannot score during grace", () => {
+  const e = fixture();
+  assert.equal(e.handTrackingDisplayState("left"), "lost");
+  e.frame(); e.faceVisible = false; e.frame();
+  assert.equal(e.handTrackingDisplayState("left"), "grace");
+  assert.equal(e.isHandTrackingFresh("left"), false);
+  assert.equal(e.isHandTrackingFresh("right"), false);
+  e.resetGame([]);
+  assert.equal(e.handTrackingDisplayState("left"), "lost");
+  assert.equal(e.game.handTracking.left.lostSinceAt, null);
+});
+
+test("HUD holds the warning during grace and names the missing hand after expiry", () => {
+  const e = fixture(); e.frame(); e.labels = ["Right"]; e.frame();
+  for (const name of ["scoreValue", "comboValue", "multiplierValue", "judgementValue", "trackingStatus"]) e[name] = {};
+  e.scoreMultiplier = () => 1;
+  e.trackingDebugOutput = null;
+  vm.runInContext(source.slice(source.indexOf("function updateHud()"), source.indexOf("function render(")), e);
+  e.updateHud();
+  assert.equal(e.trackingStatus.textContent, "BRIEF TRACKING GAP / HOLDING POSITION");
+  assert.doesNotMatch(e.trackingStatus.className, /warning/);
+  e.frame(); e.frame(); e.updateHud();
+  assert.equal(e.trackingStatus.textContent, "LEFT HAND NOT TRACKED / RIGHT ACTIVE");
+  assert.match(e.trackingStatus.className, /warning/);
 });

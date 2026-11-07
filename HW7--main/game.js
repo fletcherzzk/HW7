@@ -3,6 +3,8 @@ import { validateDuration, createDemoBeats, findBeats } from "./audio-chart.js";
 const DESIGN_WIDTH = 1280;
 const DESIGN_HEIGHT = 720;
 const TRACKING_INTERVAL = 34;
+const TRACKING_FRESH_MS = 240;
+const TRACKING_GRACE_MS = 150;
 // Compare model thresholds by URL; keep the installed SDK's 0.5 defaults normally.
 const handThresholdPresets = {
   baseline: { minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5 },
@@ -116,7 +118,7 @@ const game = {
   booedThisStreak: false,
   leftLevel: 0.5,
   rightLevel: 0.5,
-  handTracking: { left: { valid: false, lastSeenAt: null }, right: { valid: false, lastSeenAt: null } },
+  handTracking: { left: { valid: false, lastSeenAt: null, lostSinceAt: null }, right: { valid: false, lastSeenAt: null, lostSinceAt: null } },
   trackingValid: false,
   lastVisionAt: 0,
   lastVisionRun: 0,
@@ -448,7 +450,7 @@ function resetGame(chart) {
     booedThisStreak: false,
     leftLevel: 0.5,
     rightLevel: 0.5,
-    handTracking: { left: { valid: false, lastSeenAt: null }, right: { valid: false, lastSeenAt: null } },
+    handTracking: { left: { valid: false, lastSeenAt: null, lostSinceAt: null }, right: { valid: false, lastSeenAt: null, lostSinceAt: null } },
     trackingValid: false,
     lastVisionAt: 0,
     lastVisionRun: 0,
@@ -498,7 +500,7 @@ function updatePreviewHands(time, now) {
   for (const hand of ["left", "right"]) {
     const next = game.chart.find(note => note.hand === hand && !note.judged);
     if (next) game[hand + "Level"] = smooth(game[hand + "Level"], next.level, 0.22);
-    game.handTracking[hand] = { valid: true, lastSeenAt: now };
+    game.handTracking[hand] = { valid: true, lastSeenAt: now, lostSinceAt: null };
   }
   game.trackingValid = true;
   game.lastVisionAt = now;
@@ -553,9 +555,12 @@ function updateTracking(now) {
       const tracking = game.handTracking[hand];
       tracking.valid = Boolean(head && palm);
       if (tracking.valid) {
+        tracking.lostSinceAt = null;
         game[hand + "Level"] = smooth(game[hand + "Level"], cameraToLevel(palm.y, head.y), smoothing);
         // Keep pre-inference timing unchanged to isolate independent-hand handling.
         tracking.lastSeenAt = now;
+      } else {
+        tracking.lostSinceAt ??= Math.min(performance.now(), (tracking.lastSeenAt ?? now) + TRACKING_FRESH_MS);
       }
     }
     if (game.trackingValid) game.lastVisionAt = now;
@@ -569,13 +574,24 @@ function updateTracking(now) {
 
 function invalidateTracking() {
   game.trackingValid = false;
-  game.handTracking.left.valid = false;
-  game.handTracking.right.valid = false;
+  for (const tracking of Object.values(game.handTracking)) {
+    tracking.valid = false;
+    tracking.lostSinceAt ??= Math.min(performance.now(), (tracking.lastSeenAt ?? performance.now()) + TRACKING_FRESH_MS);
+  }
 }
 
 function isHandTrackingFresh(hand, now = performance.now()) {
   const tracking = game.handTracking[hand];
-  return tracking.valid && tracking.lastSeenAt !== null && now - tracking.lastSeenAt < 240;
+  return tracking.valid && tracking.lastSeenAt !== null && now - tracking.lastSeenAt < TRACKING_FRESH_MS;
+}
+
+// Presentation only: never use grace to grant points or advance calibration.
+function handTrackingDisplayState(hand, now = performance.now()) {
+  if (isHandTrackingFresh(hand, now)) return "tracked";
+  const tracking = game.handTracking[hand];
+  if (tracking.lastSeenAt === null) return "lost";
+  const lossStartedAt = tracking.lostSinceAt ?? tracking.lastSeenAt + TRACKING_FRESH_MS;
+  return now - lossStartedAt < TRACKING_GRACE_MS ? "grace" : "lost";
 }
 
 function cameraToLevel(handY, headY) {
@@ -644,9 +660,14 @@ function updateHud() {
   const leftFresh = isHandTrackingFresh("left");
   const rightFresh = isHandTrackingFresh("right");
   const isFresh = leftFresh && rightFresh;
-  const warning = leftFresh ? "RIGHT HAND NOT TRACKED / LEFT ACTIVE" : rightFresh ? "LEFT HAND NOT TRACKED / RIGHT ACTIVE" : "SHOW YOUR HEAD + BOTH HANDS";
-  trackingStatus.textContent = game.preview ? "AUTOMATIC HANDS · CAMERA OFF" : isFresh ? "HEAD + BOTH HANDS DETECTED" : game.cameraError || warning;
-  trackingStatus.className = `tracking-status ${isFresh ? "ready" : "warning"}`;
+  const leftState = handTrackingDisplayState("left");
+  const rightState = handTrackingDisplayState("right");
+  const leftVisible = leftState !== "lost";
+  const rightVisible = rightState !== "lost";
+  const warning = leftVisible ? `RIGHT HAND NOT TRACKED / LEFT ${leftFresh ? "ACTIVE" : "HOLDING"}` : rightVisible ? `LEFT HAND NOT TRACKED / RIGHT ${rightFresh ? "ACTIVE" : "HOLDING"}` : "SHOW YOUR HEAD + BOTH HANDS";
+  const holding = leftVisible && rightVisible;
+  trackingStatus.textContent = game.preview ? "AUTOMATIC HANDS · CAMERA OFF" : isFresh ? "HEAD + BOTH HANDS DETECTED" : holding ? "BRIEF TRACKING GAP / HOLDING POSITION" : game.cameraError || warning;
+  trackingStatus.className = `tracking-status ${isFresh ? "ready" : holding ? "" : "warning"}`;
   if (trackingDebugOutput) {
     const sample = trackingExperiment.sample;
     const value = number => number === null ? "missing" : number.toFixed(3);
@@ -660,6 +681,7 @@ function updateHud() {
       `Inference: hands=${sample.handMs.toFixed(1)}ms face=${sample.faceMs.toFixed(1)}ms`,
       `Both detected=${game.trackingValid}; freshness limit=240ms`,
       `Left fresh=${leftFresh} age=${age("left")}; right fresh=${rightFresh} age=${age("right")}`,
+      `Display: left=${leftState} right=${rightState}; grace=${TRACKING_GRACE_MS}ms (no scoring)`,
       `Left: raw=${value(sample.leftRaw)} displayed=${value(game.leftLevel)}`,
       `Right: raw=${value(sample.rightRaw)} displayed=${value(game.rightLevel)}`,
       `Smoothing=${trackingExperiment.smoothing ? "original 0.42" : "OFF (direct)"}`,
@@ -847,7 +869,7 @@ function drawControlRails() {
   [LEFT_RAIL, RIGHT_RAIL].forEach((x, index) => {
     context.strokeStyle = index === 0 ? "#72d8ef" : "#ff8a91";
     context.lineWidth = 3;
-    context.globalAlpha = isHandTrackingFresh(index === 0 ? "left" : "right") ? 0.4 : 0.15;
+    context.globalAlpha = handTrackingDisplayState(index === 0 ? "left" : "right") !== "lost" ? 0.4 : 0.15;
     context.strokeRect(x - 17, CONTROL_TOP + 15, 34, CONTROL_BOTTOM - CONTROL_TOP - 30);
     context.globalAlpha = 1;
     context.fillStyle = "#fff9ed";
@@ -911,11 +933,11 @@ function drawConductor() {
   const rightX = RIGHT_RAIL;
   const leftY = levelToY(game.leftLevel);
   const rightY = levelToY(game.rightLevel);
-  const leftFresh = isHandTrackingFresh("left");
-  const rightFresh = isHandTrackingFresh("right");
+  const leftVisible = handTrackingDisplayState("left") !== "lost";
+  const rightVisible = handTrackingDisplayState("right") !== "lost";
 
   context.save();
-  context.globalAlpha = leftFresh || rightFresh ? 0.94 : 0.36;
+  context.globalAlpha = leftVisible || rightVisible ? 0.94 : 0.36;
   context.fillStyle = "#151221";
   context.beginPath();
   context.moveTo(headX - 80, 590);
@@ -929,10 +951,10 @@ function drawConductor() {
   context.arc(headX, headY - 100, 47, 0, Math.PI * 2);
   context.fill();
 
-  context.globalAlpha = leftFresh ? 0.94 : 0.36;
+  context.globalAlpha = leftVisible ? 0.94 : 0.36;
   drawArm(headX - 38, 474, leftX, leftY, "#72d8ef");
   drawHand(leftX, leftY, "#72d8ef", "L");
-  context.globalAlpha = rightFresh ? 0.94 : 0.36;
+  context.globalAlpha = rightVisible ? 0.94 : 0.36;
   drawArm(headX + 38, 474, rightX, rightY, "#ff8a91");
   drawHand(rightX, rightY, "#ff8a91", "R");
   context.restore();
@@ -1124,7 +1146,7 @@ function startMenuAnimation() {
     if (setupScreen.hidden) return;
     const time = 4 + (now / 1000 % 22);
     const previous = { chart: game.chart, leftLevel: game.leftLevel, rightLevel: game.rightLevel, trackingValid: game.trackingValid, lastVisionAt: game.lastVisionAt, handTracking: game.handTracking };
-    game.handTracking = { left: { valid: true, lastSeenAt: now }, right: { valid: true, lastSeenAt: now } };
+    game.handTracking = { left: { valid: true, lastSeenAt: now, lostSinceAt: null }, right: { valid: true, lastSeenAt: now, lostSinceAt: null } };
     game.chart = previewChart;
     game.leftLevel = 0.5 + Math.sin(now / 700) * 0.23;
     game.rightLevel = 0.5 + Math.cos(now / 900) * 0.27;
