@@ -1,4 +1,4 @@
-# in implementation folder, there are just dummy code, the changes are in HW7-main folder
+In implementation folder, there are work logs, the changes are in HW7-main folder
 
 
 1. The player can activate the camera. If access is denied or the camera is unavailable, the game displays a clear message
