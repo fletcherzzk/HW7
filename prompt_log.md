@@ -30,3 +30,35 @@ that is absent from the HTML; this experiment does not fix that separate issue.
 Validation: JavaScript syntax and isolated synthetic detection scenarios are
 checked as part of this change. Actual camera movement and timing require a live
 player comparison. HANDOFF_REPORT.md was not created or edited.
+
+## 2026-11-06 - Independent hand updates and scoring
+
+User evidence: live inference times did not seem dominant; mapped-left detection
+frequently became false and the shared age approached 800 ms. The user authorized
+independent-hand handling and additional raw-result diagnostics, retaining the
+previous-version requirement.
+
+Changes: per-hand validity and last-seen timestamps now drive movement, scoring,
+rail/hand dimming, and targeted warnings. Missing face or model/video failure
+invalidates both. Calibration still requires both hands and the face. Smoothing
+remains 0.42 by default, and the existing diagnostic checkbox still bypasses it.
+Raw hand counts, handedness labels/confidence, and separate hand ages are shown.
+The 240 ms limit, pre-inference timestamps, CV settings, and label mapping are
+unchanged. README now records every acceptance criterion and this change's scope.
+Commit ea05764 preserves the earlier experiment; c260f9f preserves the original.
+The student's existing implementation log was not edited or staged.
+
+Validation: six regression tests passed using controlled CV output with actual
+game functions: independent updates/scoring for either hand, loss/recovery,
+face loss/model exceptions, stale/unavailable frames, duplicate labels, and
+original smoothing versus direct mode/reset. JavaScript syntax check passed.
+No post-change live camera success is claimed.
+
+AI mistakes/corrections: the shared 800 ms age must not be described as inference
+duration. Handedness confidence must not be described as positional accuracy.
+An edit through PowerShell initially replaced a warning separator with a question
+mark; it was corrected to an ASCII separator. The default node --test runner
+could not spawn a child process in the sandbox (EPERM); running the same node:test
+suite directly succeeded, and npm test uses that command. An initial patch had
+out-of-order anchors and failed without changing files; the edit was reapplied.
+HANDOFF_REPORT.md remains untouched.

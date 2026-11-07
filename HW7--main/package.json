@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node tracking.test.mjs",
     "start": "node start-server.mjs",
     "generate-demo": "node generate-demo-track.mjs",
     "check": "node --check game.js && node --check start-server.mjs && node --check generate-demo-track.mjs"

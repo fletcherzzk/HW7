@@ -97,6 +97,7 @@ const game = {
   booedThisStreak: false,
   leftLevel: 0.5,
   rightLevel: 0.5,
+  handTracking: { left: { valid: false, lastSeenAt: null }, right: { valid: false, lastSeenAt: null } },
   trackingValid: false,
   lastVisionAt: 0,
   lastVisionRun: 0,
@@ -414,6 +415,7 @@ function nextLevel(hand, previous, difficulty, forceWideMove, random) {
 }
 
 function resetGame(chart) {
+  trackingExperiment.sample = null;
   Object.assign(game, {
     active: false,
     chart,
@@ -426,6 +428,7 @@ function resetGame(chart) {
     booedThisStreak: false,
     leftLevel: 0.5,
     rightLevel: 0.5,
+    handTracking: { left: { valid: false, lastSeenAt: null }, right: { valid: false, lastSeenAt: null } },
     trackingValid: false,
     lastVisionAt: 0,
     lastVisionRun: 0,
@@ -475,13 +478,14 @@ function updatePreviewHands(time, now) {
   for (const hand of ["left", "right"]) {
     const next = game.chart.find(note => note.hand === hand && !note.judged);
     if (next) game[hand + "Level"] = smooth(game[hand + "Level"], next.level, 0.22);
+    game.handTracking[hand] = { valid: true, lastSeenAt: now };
   }
   game.trackingValid = true;
   game.lastVisionAt = now;
 }
 
 function updateTracking(now) {
-  if (!handLandmarker || !faceLandmarker || cameraVideo.readyState < 2 || !cameraVideo.videoWidth) { game.trackingValid = false; return; }
+  if (!handLandmarker || !faceLandmarker || cameraVideo.readyState < 2 || !cameraVideo.videoWidth) { invalidateTracking(); return; }
   if (cameraVideo.currentTime === game.lastVideoTime) return;
   game.lastVideoTime = cameraVideo.currentTime;
   if (now - game.lastVisionRun < TRACKING_INTERVAL) return;
@@ -511,24 +515,45 @@ function updateTracking(now) {
     if (trackingExperiment.enabled) {
       trackingExperiment.sample = {
         head: Boolean(head), left: Boolean(leftHand), right: Boolean(rightHand),
+        handCount: hands.landmarks?.length || 0,
+        labels: (hands.landmarks || []).map((_, index) => {
+          const category = hands.handedness?.[index]?.[0];
+          return index + ": " + (category?.categoryName || "unknown") + " (" + (Number.isFinite(category?.score) ? category.score.toFixed(3) : "no score") + ")";
+        }).join(", ") || "none",
         handMs: handsFinishedAt - inferenceStartedAt,
         faceMs: facesFinishedAt - handsFinishedAt,
         leftRaw: head && leftHand ? cameraToLevel(leftHand.y, head.y) : null,
         rightRaw: head && rightHand ? cameraToLevel(rightHand.y, head.y) : null,
       };
     }
-    if (game.trackingValid) {
-      const smoothing = trackingExperiment.enabled && !trackingExperiment.smoothing ? 1 : 0.42;
-      game.leftLevel = smooth(game.leftLevel, cameraToLevel(leftHand.y, head.y), smoothing);
-      game.rightLevel = smooth(game.rightLevel, cameraToLevel(rightHand.y, head.y), smoothing);
-      game.lastVisionAt = now;
+    const smoothing = trackingExperiment.enabled && !trackingExperiment.smoothing ? 1 : 0.42;
+    for (const [hand, palm] of [["left", leftHand], ["right", rightHand]]) {
+      const tracking = game.handTracking[hand];
+      tracking.valid = Boolean(head && palm);
+      if (tracking.valid) {
+        game[hand + "Level"] = smooth(game[hand + "Level"], cameraToLevel(palm.y, head.y), smoothing);
+        // Keep pre-inference timing unchanged to isolate independent-hand handling.
+        tracking.lastSeenAt = now;
+      }
     }
+    if (game.trackingValid) game.lastVisionAt = now;
   } catch (error) {
-    game.trackingValid = false;
+    invalidateTracking();
     game.cameraError = "TRACKING HICCUP";
     game.trackingErrors += 1;
     if (game.trackingErrors > 10) throw new Error("Tracking stopped. Restart the concert or try another browser.");
   }
+}
+
+function invalidateTracking() {
+  game.trackingValid = false;
+  game.handTracking.left.valid = false;
+  game.handTracking.right.valid = false;
+}
+
+function isHandTrackingFresh(hand, now = performance.now()) {
+  const tracking = game.handTracking[hand];
+  return tracking.valid && tracking.lastSeenAt !== null && now - tracking.lastSeenAt < 240;
 }
 
 function cameraToLevel(handY, headY) {
@@ -540,7 +565,7 @@ function evaluateNotes(songTime) {
     if (note.judged || songTime < note.time) continue;
     note.judged = true;
     const currentLevel = note.hand === "left" ? game.leftLevel : game.rightLevel;
-    const trackingFresh = game.trackingValid && performance.now() - game.lastVisionAt < 240;
+    const trackingFresh = isHandTrackingFresh(note.hand);
     const distance = Math.abs(currentLevel - note.level);
     if (trackingFresh && distance <= note.tolerance) recordHit(note, distance);
     else recordMiss(note, trackingFresh ? "MISS!" : "NO TRACK!");
@@ -594,16 +619,23 @@ function updateHud() {
   multiplierValue.textContent = `x${scoreMultiplier()}`;
   judgementValue.textContent = game.judgement.text;
   judgementValue.className = `judgement ${game.judgement.kind}`;
-  const isFresh = game.trackingValid && performance.now() - game.lastVisionAt < 240;
-  trackingStatus.textContent = game.preview ? "AUTOMATIC HANDS · CAMERA OFF" : isFresh ? "HEAD + BOTH HANDS DETECTED" : game.cameraError || "SHOW YOUR HEAD + BOTH HANDS";
+  const leftFresh = isHandTrackingFresh("left");
+  const rightFresh = isHandTrackingFresh("right");
+  const isFresh = leftFresh && rightFresh;
+  const warning = leftFresh ? "RIGHT HAND NOT TRACKED / LEFT ACTIVE" : rightFresh ? "LEFT HAND NOT TRACKED / RIGHT ACTIVE" : "SHOW YOUR HEAD + BOTH HANDS";
+  trackingStatus.textContent = game.preview ? "AUTOMATIC HANDS · CAMERA OFF" : isFresh ? "HEAD + BOTH HANDS DETECTED" : game.cameraError || warning;
   trackingStatus.className = `tracking-status ${isFresh ? "ready" : "warning"}`;
   if (trackingDebugOutput) {
     const sample = trackingExperiment.sample;
     const value = number => number === null ? "missing" : number.toFixed(3);
+    const age = hand => game.handTracking[hand].lastSeenAt === null ? "never" : Math.round(performance.now() - game.handTracking[hand].lastSeenAt) + "ms";
     trackingDebugOutput.textContent = sample ? [
       `CV detections: face=${sample.head} left=${sample.left} right=${sample.right}`,
+      `Raw hands=${sample.handCount}; labels/confidence: ${sample.labels}`,
+      "Mapping: model Right -> game left; model Left -> game right",
       `Inference: hands=${sample.handMs.toFixed(1)}ms face=${sample.faceMs.toFixed(1)}ms`,
-      `Game validity=${game.trackingValid} fresh=${isFresh} age=${Math.round(performance.now() - game.lastVisionAt)}ms (limit 240)`,
+      `Both detected=${game.trackingValid}; freshness limit=240ms`,
+      `Left fresh=${leftFresh} age=${age("left")}; right fresh=${rightFresh} age=${age("right")}`,
       `Left: raw=${value(sample.leftRaw)} displayed=${value(game.leftLevel)}`,
       `Right: raw=${value(sample.rightRaw)} displayed=${value(game.rightLevel)}`,
       `Smoothing=${trackingExperiment.smoothing ? "original 0.42" : "OFF (direct)"}`,
@@ -770,7 +802,6 @@ function drawAudience() {
 
 function drawControlRails() {
   const setting = difficultySettings[game.difficulty];
-  const freshTracking = game.trackingValid && performance.now() - game.lastVisionAt < 240;
   context.save();
   context.globalAlpha = 0.3;
   context.setLineDash([10, 13]);
@@ -792,7 +823,7 @@ function drawControlRails() {
   [LEFT_RAIL, RIGHT_RAIL].forEach((x, index) => {
     context.strokeStyle = index === 0 ? "#72d8ef" : "#ff8a91";
     context.lineWidth = 3;
-    context.globalAlpha = freshTracking ? 0.4 : 0.15;
+    context.globalAlpha = isHandTrackingFresh(index === 0 ? "left" : "right") ? 0.4 : 0.15;
     context.strokeRect(x - 17, CONTROL_TOP + 15, 34, CONTROL_BOTTOM - CONTROL_TOP - 30);
     context.globalAlpha = 1;
     context.fillStyle = "#fff9ed";
@@ -856,10 +887,11 @@ function drawConductor() {
   const rightX = RIGHT_RAIL;
   const leftY = levelToY(game.leftLevel);
   const rightY = levelToY(game.rightLevel);
-  const freshTracking = game.trackingValid && performance.now() - game.lastVisionAt < 240;
+  const leftFresh = isHandTrackingFresh("left");
+  const rightFresh = isHandTrackingFresh("right");
 
   context.save();
-  context.globalAlpha = freshTracking ? 0.94 : 0.36;
+  context.globalAlpha = leftFresh || rightFresh ? 0.94 : 0.36;
   context.fillStyle = "#151221";
   context.beginPath();
   context.moveTo(headX - 80, 590);
@@ -873,9 +905,11 @@ function drawConductor() {
   context.arc(headX, headY - 100, 47, 0, Math.PI * 2);
   context.fill();
 
+  context.globalAlpha = leftFresh ? 0.94 : 0.36;
   drawArm(headX - 38, 474, leftX, leftY, "#72d8ef");
-  drawArm(headX + 38, 474, rightX, rightY, "#ff8a91");
   drawHand(leftX, leftY, "#72d8ef", "L");
+  context.globalAlpha = rightFresh ? 0.94 : 0.36;
+  drawArm(headX + 38, 474, rightX, rightY, "#ff8a91");
   drawHand(rightX, rightY, "#ff8a91", "R");
   context.restore();
 }
@@ -1065,7 +1099,8 @@ function startMenuAnimation() {
   const tick = now => {
     if (setupScreen.hidden) return;
     const time = 4 + (now / 1000 % 22);
-    const previous = { chart: game.chart, leftLevel: game.leftLevel, rightLevel: game.rightLevel, trackingValid: game.trackingValid, lastVisionAt: game.lastVisionAt };
+    const previous = { chart: game.chart, leftLevel: game.leftLevel, rightLevel: game.rightLevel, trackingValid: game.trackingValid, lastVisionAt: game.lastVisionAt, handTracking: game.handTracking };
+    game.handTracking = { left: { valid: true, lastSeenAt: now }, right: { valid: true, lastSeenAt: now } };
     game.chart = previewChart;
     game.leftLevel = 0.5 + Math.sin(now / 700) * 0.23;
     game.rightLevel = 0.5 + Math.cos(now / 900) * 0.27;
