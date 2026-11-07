@@ -31,7 +31,7 @@
    From the feedback of codex, I think I might be able to solve this problem, so I will be working on it.
 
 
-7. Working log:
+   # Work log:
    I don't think there is problem with CV reliability, CV algorithm is correct.
    I notice that when the hands moves every quickly, it will first show up as not being tracked, and then go to the correct position, I will give this info to codex
 
@@ -46,8 +46,8 @@
    From the third experiment:
    I confirmed that the problem is with detection and I feel like the confidence score is a always bit too high, which may be the reason for this problem.
 
-   
-    
+
+
 
 
    
