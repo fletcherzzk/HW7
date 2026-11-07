@@ -123,3 +123,12 @@ also passed. Live camera confirmation remains for the player; no live improvemen
 is claimed. One README patch had an invalid extra anchor and failed without edits;
 it was reapplied correctly. HANDOFF_REPORT.md and the student's implementation log
 remain untouched.
+
+## 2026-11-06 - Double display grace for live comparison
+
+User requested twice the current grace duration. Changed TRACKING_GRACE_MS from
+150 to 300 ms per hand. Detection thresholds, smoothing, and strict scoring
+validity are unchanged. Updated README and regression boundary cases; the test
+fixture now reads the actual configured grace duration from game.js. Previous
+150 ms version is preserved in commit a6c6d5e. All 13 regression tests and syntax
+checks passed. No live outcome is claimed. HANDOFF_REPORT.md remains untouched.

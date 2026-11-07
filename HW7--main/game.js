@@ -4,7 +4,7 @@ const DESIGN_WIDTH = 1280;
 const DESIGN_HEIGHT = 720;
 const TRACKING_INTERVAL = 34;
 const TRACKING_FRESH_MS = 240;
-const TRACKING_GRACE_MS = 150;
+const TRACKING_GRACE_MS = 300;
 // Compare model thresholds by URL; keep the installed SDK's 0.5 defaults normally.
 const handThresholdPresets = {
   baseline: { minHandDetectionConfidence: 0.5, minHandPresenceConfidence: 0.5, minTrackingConfidence: 0.5 },

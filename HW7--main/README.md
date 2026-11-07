@@ -19,7 +19,7 @@ Open `http://localhost:4173` in a modern Chromium browser and allow camera acces
 3. Move the blue left-hand indicator and coral right-hand indicator to their matching notes as they arrive at the center rails.
 4. A green tracking indicator means the game has found your head and both hands.
    If one hand disappears during play, the other can still move and score. The
-   missing hand stays at its last position, dims after a 150 ms grace period,
+   missing hand stays at its last position, dims after a 300 ms grace period,
    and cannot earn points at any time while missing. Your
    face is required for either hand because controls use head-relative heights.
 
@@ -159,7 +159,7 @@ live verification; they are not claimed as fully passed acceptance tests.
 | 5. Falling targets, separate patterns, rhythm timing | Partial: variable-height patterns exist, but targets move horizontally. Energy-peak detection falls back to a fixed grid. |
 | 6. Height-based scoring once per target | Implemented; now validates the required hand independently. Synthetic regression checks cover missing/stale hands and duplicate judging. |
 | 7. Results, replay, and song selection | Implemented; requires live round-end verification. |
-| 8. Tracking-loss warning and scoring protection | Implemented per hand; warnings/dimming have a 150 ms display grace. Missing/stale data cannot score, including during grace. Missing face invalidates both for scoring. Synthetic checks passed; live comparison pending. |
+| 8. Tracking-loss warning and scoring protection | Implemented per hand; warnings/dimming have a 300 ms display grace. Missing/stale data cannot score, including during grace. Missing face invalidates both for scoring. Synthetic checks passed; live comparison pending. |
 | 9. Difficulty narrows visible height tolerance | Implemented with Easy/Normal/Hard tolerances; visual verification pending. |
 | 10. Auditorium/orchestra with readable gameplay | Canvas scene implemented; visual verification pending. |
 | 11. One boo per five-miss streak, reset on hit | Logic implemented; synthesized descending sound needs listening to assess whether it resembles audience booing. |
@@ -172,7 +172,7 @@ extension. This change does not address those separate features.
 
 In `game.js`, `updateTracking` maps CV results and updates each hand independently;
 `isHandTrackingFresh` centralizes the strict per-hand scoring freshness rule;
-`handTrackingDisplayState` adds display-only grace using `TRACKING_GRACE_MS` (150).
+`handTrackingDisplayState` adds display-only grace using `TRACKING_GRACE_MS` (300).
 `invalidateTracking` rejects both hands on camera/model failure. `evaluateNotes`
 judges the required hand once. `updateHud`, `drawControlRails`, and `drawConductor`
 show which hand remains active. `resetGame` clears hand ages between rounds.
@@ -186,7 +186,7 @@ Next: (1) verify corrected physical left/right controls;
 Known limitation: duplicate-label handling is unchanged;
 two identical labels still leave one game hand missing. Lost hands retain their
 last displayed position and are ineligible to score immediately; dimming and
-Not Tracked warnings wait up to 150 ms after loss is observed. If video stalls,
+Not Tracked warnings wait up to 300 ms after loss is observed. If video stalls,
 grace begins when the existing 240 ms freshness window expires; scoring stops
 at that expiry, without waiting for display grace. Repeated missing results do
 not restart grace. Hands never detected get no grace. Calibration still resets
